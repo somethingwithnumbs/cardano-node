@@ -56,8 +56,7 @@ import           Ouroboros.Consensus.HeaderValidation (OtherHeaderEnvelopeError)
 import           Ouroboros.Consensus.Ledger.Abstract (LedgerErr, LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import           Ouroboros.Consensus.Ledger.Inspect (InspectLedger, LedgerEvent)
-import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr, GenTx, GenTxId, HasTxs,
-                     TxId)
+import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr, GenTx, GenTxId, HasTxs)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Mempool.API (MempoolSize (..), TraceEventMempool (..))
 import qualified Ouroboros.Consensus.Network.NodeToClient as NodeToClient
@@ -65,8 +64,6 @@ import qualified Ouroboros.Consensus.Network.NodeToNode as NodeToNode
 import qualified Ouroboros.Consensus.Node.Run as Consensus (RunNode)
 import qualified Ouroboros.Consensus.Node.Tracers as Consensus
 import           Ouroboros.Consensus.Protocol.Abstract (CannotLead, ValidationErr)
-import           Ouroboros.Consensus.Util.Condense (Condense)
-import           Ouroboros.Consensus.Util.Orphans ()
 
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (BlockNo (..), HasHeader (..), Point, StandardHash,
@@ -83,6 +80,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.OnDisk as LedgerDB
 
 import           Cardano.Tracing.Config
 import           Cardano.Tracing.Constraints (TraceConstraints)
+import           Cardano.Tracing.ConvertTxId (ConvertTxId)
 import           Cardano.Tracing.Kernel
 import           Cardano.Tracing.Metrics (HasKESMetricsData (..), KESMetricsData (..),
                      MaxKESEvolutions (..), OperationalCertStartKESPeriod (..))
@@ -798,7 +796,7 @@ nodeToClientTracers' trSel verb tr =
 
 nodeToNodeTracers'
   :: ( Consensus.RunNode blk
-     , Condense (TxId (GenTx blk))
+     , ConvertTxId blk
      , HasTxs blk
      , Show peer
      )
