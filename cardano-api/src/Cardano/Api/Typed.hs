@@ -32,12 +32,13 @@
 -- using "Cardano.Api.Byron" or "Cardano.Api.Shelley".
 --
 module Cardano.Api.Typed (
+    -- TODO: REMOVE ME
+    parseMofN,
     -- * Eras
     Byron,
     Shelley,
     HasTypeProxy(..),
     AsType(..),
-
     -- * Cryptographic key interface
     -- $keys
     Key,
@@ -307,24 +308,24 @@ module Cardano.Api.Typed (
     toShelleyNetwork,
   ) where
 
-
+import           Cardano.Prelude (panic)
 import           Prelude
 
 import           Data.Aeson.Encode.Pretty (encodePretty')
 import           Data.Bifunctor (first)
+import qualified Data.HashMap.Strict as HMS
 import           Data.Kind (Constraint)
 import           Data.List as List
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe
 import           Data.Proxy (Proxy (..))
-import           Data.Typeable (Typeable)
-import           Data.Void (Void)
-import           Data.Word
---import           Data.Either
 import           Data.String (IsString (fromString))
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
+import           Data.Typeable (Typeable)
+import           Data.Void (Void)
+import           Data.Word
 import           Numeric.Natural
 
 import           Data.IP (IPv4, IPv6)
@@ -344,6 +345,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Set as Set
+import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
 
 import qualified Codec.Binary.Bech32 as Bech32
@@ -357,7 +359,7 @@ import           Control.Monad.Trans.Except (ExceptT (..))
 import           Control.Monad.Trans.Except.Extra
 import           Control.Tracer (nullTracer)
 
-import           Data.Aeson (FromJSON (..), ToJSON (..), (.:))
+import           Data.Aeson (FromJSON (..), ToJSON (..), Value (..), (.:))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
 
@@ -466,7 +468,10 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Client as StateQuery
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type (AcquireFailure)
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Client as TxSubmission
 
-
+-- TODO: REMOVE ME
+import           Text.Megaparsec (parseMaybe)
+import qualified Text.Megaparsec as MParsec
+import           Text.Megaparsec.Char
 
 
 -- ----------------------------------------------------------------------------
@@ -1564,6 +1569,121 @@ data MultiSigScript = RequireSignature (Hash PaymentKey)
                     | RequireAnyOf [MultiSigScript]
                     | RequireMOf Int [MultiSigScript]
   deriving (Eq, Show)
+
+instance FromJSON MultiSigScript where
+  parseJSON =
+    Aeson.withObject "MultiSigScript" $ \obj -> do
+    -- Parse "all" multisig objects
+    allReqHashes <- case HMS.lookup "all" obj of
+                       Just (Array vecAllReqHashes) -> return . Just . RequireAllOf $ gatherSignatures vecAllReqHashes
+                       _ -> return Nothing
+    -- Parse "any" multisig objects
+    anyReqHashes <- case HMS.lookup "any" obj of
+                       Just (Array vecAnyReqHashes) -> return . Just . RequireAnyOf $ gatherSignatures vecAnyReqHashes
+                       _ -> return Nothing
+    -- Parse "MofN" multisig objects
+    mofN <- return $ filterMofN obj
+    case (allReqHashes, anyReqHashes, mofN) of
+      (Nothing, Nothing, Nothing) -> fail "Script does not contain all, any or mOfn JSON objects."
+      (Just _, Just _, Just _) -> fail "Script contains all, and and mOfn JSON objects. Please specify one type of multisig objects."
+      (Just mss, _, _) -> return mss
+      (_, Just mss, _) -> return mss
+      (_, _, Just mss) -> return mss
+
+
+gatherSignatures :: Vector Value -> [MultiSigScript]
+gatherSignatures anyList = do
+  let mPaymentKeyHashes = Vector.map (\val -> case filterValue val of
+                                                Just hashPayKey ->
+                                                  Just $ RequireSignature hashPayKey
+                                                Nothing -> Nothing
+                                     ) anyList
+  catMaybes $ Vector.toList mPaymentKeyHashes
+ where
+  filterValue :: Value -> Maybe (Hash PaymentKey)
+  filterValue (String hpk) = Just $ convertToHash hpk
+  filterValue (Object _) = Nothing
+  filterValue (Array _) = Nothing
+  filterValue (Number _) = Nothing
+  filterValue (Bool _) = Nothing
+  filterValue Null = Nothing
+
+  convertToHash :: Text -> Hash PaymentKey
+  convertToHash txt = case deserialiseFromRawBytes (AsHash AsPaymentKey) $ Text.encodeUtf8 txt of
+                        Just payKeyHash -> payKeyHash
+                        Nothing -> panic $ "Error deserialising payment key hash: " <> txt
+
+type Parser = MParsec.Parsec Void String
+
+-- Get requirement M
+filterMofN :: HMS.HashMap Text Value -> Maybe MultiSigScript
+filterMofN obj = do
+  let mOfn = map filterScriptParser (catMaybes . map (parseMaybe scriptParser . Text.unpack) $ HMS.keys obj)
+  case mOfn of
+    [Just (m, _, _)] -> case HMS.lookup "any" obj of
+             Just (Array mHashed) -> Just . RequireMOf m $ gatherSignatures mHashed
+             _ -> Nothing
+    _ -> Nothing
+ where
+   filterScriptParser :: ScriptParser -> Maybe (Int, String, Int)
+   filterScriptParser (All _) = Nothing
+   filterScriptParser (Any _) = Nothing
+   filterScriptParser (MofN mon) = Just mon
+
+
+data ScriptParser = All String | Any String | MofN (Int, String, Int)
+
+scriptParser :: Parser ScriptParser
+scriptParser = parseMofN <|> parseAll <|> parseAny
+
+parseMofN :: Parser ScriptParser
+parseMofN = do
+  m <- many digitChar
+  of' <- string "of"
+  n <- many digitChar
+  return $ MofN (read m, of', read n)
+
+parseAll :: Parser ScriptParser
+parseAll = All <$> string "all"
+
+parseAny :: Parser ScriptParser
+parseAny = Any <$> string "any"
+
+{-
+
+RequiredSignature ->
+
+{ required: "hashpaymentkey"}
+
+or
+
+{ required:
+  {"name": "hashpaymentkey"
+  }
+}
+
+or
+
+"hashpaymentkey"
+
+RequiresAllOf ->
+
+--- Only makes sense to list all the signature you require
+{ "all" : [RequiredSignature]
+
+}
+--- Only makes sense to list all the signature you require
+RequiresAnyOf ->
+{ "any" : [RequiredSignature]
+
+
+}
+RequireMofN ->
+{ "mOfn": [RequiredSignature]
+
+}
+
+-}
 
 instance HasTypeProxy Script where
     data AsType Script = AsScript

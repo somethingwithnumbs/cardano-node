@@ -57,6 +57,7 @@ library
                       , io-sim-classes
                       , iohk-monitoring
                       , iproute
+                      , megaparsec
                       , memory
                       , network
                       , network-mux
