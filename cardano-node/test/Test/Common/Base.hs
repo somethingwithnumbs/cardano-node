@@ -31,9 +31,6 @@ import qualified Hedgehog.Internal.Property as H
 import qualified System.Directory as IO
 import qualified System.IO.Temp as IO
 
-cardanoCliPath :: FilePath
-cardanoCliPath = "cardano-cli"
-
 propertyOnce :: H.PropertyT IO () -> H.Property
 propertyOnce = H.withTests 1 . H.property
 
@@ -58,7 +55,7 @@ workspace prefixPath f = GHC.withFrozenCallStack $ do
   let systemPrefixPath = systemTemp <> "/" <> prefixPath
   liftIO $ IO.createDirectoryIfMissing True systemPrefixPath
   ws <- liftIO $ IO.createTempDirectory systemPrefixPath "test"
-  H.annotate $ "Workspace: " <> cardanoCliPath <> "/" <> ws
+  H.annotate $ "Workspace: " <> ws
   f ws
   liftIO $ IO.removeDirectoryRecursive ws
 
